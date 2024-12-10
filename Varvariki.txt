@@ -1,0 +1,125 @@
+import os
+import random
+import math 
+
+def compute_gap(coord1, coord2):
+    delta_x = coord1[0] - coord2[0]
+    delta_y = coord1[1] - coord2[1]
+    return math.sqrt(delta_x**2 + delta_y**2)
+
+def generate_random_coords():
+    x = random.uniform(0, 9)
+    y = random.uniform(0, 9)
+    return (x, y)
+
+def adjust_positions(points, max_attempts=1000):
+    def has_conflict(p1, p2):
+        return compute_gap(p1, p2) < 1
+
+    for attempt in range(max_attempts):
+        updated = False
+        for idx, current_point in enumerate(points):
+            for other_idx in range(idx + 1, len(points)):
+                if has_conflict(current_point, points[other_idx]):
+                    points[idx] = generate_random_coords()
+                    updated = True
+                    break
+            if updated:
+                break
+        if not updated:
+            break
+    else:
+        print("[WARNING] Maximum attempts reached while adjusting positions.")
+    return points
+
+print('*** Welcome to the Aruco Map Setup ***')
+print('Please provide the map name (do not include ".txt")')
+map_filename = input('Enter map name: ')
+print(f'Configuring the file: {map_filename}.txt\n')
+
+launch_path = '/home/clover/catkin_ws/src/clover/clover/launch/clover.launch'
+with open(launch_path, 'r') as file:
+    clover_config = file.readlines()
+
+clover_config[9] = '    <arg name="aruco" default="true"/>\n'
+with open(launch_path, 'w') as file:
+    file.writelines(clover_config)
+print('[INFO] Clover launch file configured successfully.')
+
+aruco_path = '/home/clover/catkin_ws/src/clover/clover/launch/aruco.launch'
+with open(aruco_path, 'r') as file:
+    aruco_config = file.readlines()
+
+aruco_config[2] = '    <arg name="aruco_map" default="true"/>\n'
+aruco_config[3] = '    <arg name="aruco_vpe" default="true"/>\n'
+aruco_config[6] = f'    <arg name="map" default="{map_filename}.txt"/>\n'
+aruco_config[5] = '    <arg name="length" default="0.22"/>\n'
+
+with open(aruco_path, 'w') as file:
+    file.writelines(aruco_config)
+print('[INFO] Aruco launch file configured successfully.')
+
+first_marker_id = random.randint(0, 101)
+cmd_aruco_map = f'rosrun aruco_pose genmap.py 0.22 10 10 1 1 {first_marker_id} 0 0 --bottom-left -o {map_filename}.txt'
+os.system(cmd_aruco_map)
+print(f'[INFO] Aruco map "{map_filename}.txt" created successfully.')
+
+cmd_aruco_gazebo = f'rosrun clover_simulation aruco_gen --single-model --model-path=/home/clover/catkin_ws/src/clover/clover_simulation/models/ /home/clover/catkin_ws/src/clover/aruco_pose/map/{map_filename}.txt'
+os.system(cmd_aruco_gazebo)
+print('[INFO] Gazebo Aruco map created successfully.')
+
+positions = [(random.uniform(0.5, 9), random.uniform(0.5, 9)) for _ in range(5)]
+adjusted_positions = resolve_position_conflicts(positions)
+color_options = ['red', 'green', 'blue', 'yellow']
+random_colors = [random.choice(color_options) for _ in range(5)]
+
+world_path = f'/home/clover/catkin_ws/src/clover/clover_simulation/resources/worlds/{map_filename}.world'
+world_content = f"""<sdf version='1.7'>
+  <world name='default'>
+
+    <light name='sun' type='directional'>
+      <cast_shadows>1</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <direction>-0.5 0.5 -1</direction>
+    </light>
+
+    <include>
+      <uri>model://aruco_{map_filename}_txt</uri>
+    </include>
+"""
+
+for i, position in enumerate(adjusted_positions):
+    world_content += f"""
+    <model name='drone_point_{random_colors[i]}_{i}'>
+      <static>1</static>
+      <link name='link'>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <uri>model://dronepoint_{random_colors[i]}/meshes/dronepoint.dae</uri>
+              <scale>0.3 0.3 0.2</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+      <pose>{position[0]} {position[1]} 0 0 0 0</pose>
+    </model>
+    """
+world_content += "</world>\n</sdf>"
+
+with open(world_path, 'w') as file:
+    file.write(world_content)
+print('[INFO] Gazebo world file created successfully.')
+
+sim_launch_path = '/home/clover/catkin_ws/src/clover/clover_simulation/launch/simulator.launch'
+with open(sim_launch_path, 'r') as file:
+    sim_launch_config = file.readlines()
+
+sim_launch_config[18] = f'        <arg name="world_name" value="$(find clover_simulation)/resources/worlds/{map_filename}.world"/>\n'
+with open(sim_launch_path, 'w') as file:
+    file.writelines(sim_launch_config)
+print('[INFO] Simulator launch file updated successfully.')
+
+print('[SUCCESS] All tasks completed successfully!')
